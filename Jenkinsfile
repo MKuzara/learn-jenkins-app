@@ -4,6 +4,7 @@ pipeline {
     environment {
         NETLIFY_SITE_ID = '6444ad0e-83c5-4c1a-bca2-2dbfa9c47082'
         NETLIFY_AUTH_TOKEN = credentials('netlify-token')
+        REACT_APP_VERSION = '1.0.$BUILD_ID'
     }
 
     stages {
@@ -53,16 +54,14 @@ pipeline {
                 stage('E2E') {
                     agent {
                         docker {
-                            image 'mcr.microsoft.com/playwright:v1.47.2-noble'
+                            image 'my-playwright'
                             reuseNode true
-                            args '-u root:root'
                         }
                     }
                     steps {
                         sh '''
                             echo "E2E stage"
-                            npm install serve
-                            node_modules/.bin/serve -s build &
+                            serve -s build &
                             sleep 10
                             npx playwright test --reported=html
                         '''
@@ -81,19 +80,24 @@ pipeline {
         stage('Deploy Staging') {
             agent {
                 docker {
-                    image 'node:18-alpine'
+                    image 'my-playwright'
                     reuseNode true
                 }
             }
+
+            environment {
+                CI_ENVIRONMENT_URL = 'STAGING_URL_TO_BE_SET'
+            }
+
             steps {
                 sh '''
-                    npm install netlify-cli node-jq
-                    node_modules/.bin/netlify --version
+                    netlify --version
 
                     echo "Deploying to production. Side id: $NETLIFY_SITE_ID"
-                    node_modules/.bin/netlify status
-
-                    node_modules/.bin/netlify deploy --dir=build --json > deploy-output.json
+                    netlify status
+                    netlify deploy --dir=build --json > deploy-output.json
+                    CI_ENVIRONMENT_URL=$(node-jq -r '.deploy_url' deploy-output.json)
+                    npx playwright test --reporter=html
                 '''
                 script {
                     env.STAGING_URL = sh(script: "node_modules/.bin/node-jq -r '.deploy_url' deploy-output.json", returnStdout: tree)
@@ -111,49 +115,39 @@ pipeline {
             }
         }
 
-        stage('Deploy') {
+        stage('Deploy prod') {
             agent {
                 docker {
-                    image 'node:18-alpine'
+                    image 'my-playwright'
                     reuseNode true
                 }
             }
             steps {
                 sh '''
-                    npm install netlify-cli
-                    node_modules/.bin/netlify --version
+                    node --version
+                    netlify --version
 
                     echo "Deploying to production. Side id: $NETLIFY_SITE_ID"
-                    node_modules/.bin/netlify status
+                    netlify status
 
-                    node_modules/.bin/netlify deploy --dir=build --prod
+                    netlify deploy --dir=build --prod
+                    npx playwright test --reporter=html
                 '''
             }
         }
        
+       environment {
+            CI_ENVIRONMENT_VARIABLE = 'https://lucent-ganache-c4de30.netlify.app'
+       }
 
         stage('PROD E2E') {
             
             agent {
                 docker {
-                    image 'mcr.microsoft.com/playwright:v1.47.2-noble'
+                    image 'my-playwright'
                     reuseNode true
                     args '-u root:root'
                 }
-            }
-
-            environment {
-                CI_ENVIRONMENT_VARIABLE = 'https://lucent-ganache-c4de30.netlify.app'
-            }
-
-            steps {
-                sh '''
-                    echo "E2E stage"
-                    npm install serve
-                    node_modules/.bin/serve -s build &
-                    sleep 10
-                    npx playwright test --reported=html
-                '''
             }
 
             post {
